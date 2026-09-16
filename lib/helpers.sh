@@ -35,6 +35,44 @@ helpers::is_installed() {
 }
 
 # -----------------------------------------------------------------------------
+# helpers::with_apt_lock <command...>
+# Runs an apt/dpkg command wrapped in a file lock to guarantee mutual
+# exclusion across parallel worker threads.
+# -----------------------------------------------------------------------------
+helpers::with_apt_lock() {
+    local lock_file="/tmp/.devbootstrap_apt.flock"
+    # Acquire lock with a 300s timeout
+    (
+        flock -x -w 300 200 || {
+            log::error "Could not acquire devbootstrap apt lock within 300s."
+            return 1
+        }
+        "$@"
+    ) 200>"$lock_file"
+}
+
+# -----------------------------------------------------------------------------
+# helpers::wait_for_apt_lock
+# Waits for any external package managers (e.g. unattended-upgrades) to release
+# dpkg locks before initiating an operation.
+# -----------------------------------------------------------------------------
+helpers::wait_for_apt_lock() {
+    local max_wait=120
+    local waited=0
+    while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+          sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || \
+          sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+        if (( waited >= max_wait )); then
+            log::warn "dpkg lock held for >${max_wait}s; attempting to proceed anyway with lock timeout."
+            break
+        fi
+        log::info "Waiting for system package manager to release dpkg lock (${waited}s)..."
+        sleep 3
+        waited=$((waited + 3))
+    done
+}
+
+# -----------------------------------------------------------------------------
 # helpers::apt_update_once
 # Runs `apt-get update` at most once per script invocation (tracked via a
 # marker file in /tmp) to avoid re-running it dozens of times across modules.
@@ -46,7 +84,8 @@ helpers::apt_update_once() {
         return 0
     fi
     log::info "Running apt-get update..."
-    if sudo apt-get update -y >>"${LOG_FILE}" 2>&1; then
+    helpers::wait_for_apt_lock
+    if helpers::with_apt_lock sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 update -y >>"${LOG_FILE}" 2>&1; then
         touch "$marker"
         log::debug "apt-get update completed"
     else
@@ -58,13 +97,7 @@ helpers::apt_update_once() {
 # -----------------------------------------------------------------------------
 # helpers::apt_install <pkg1> [pkg2 ...]
 # Installs one or more apt packages, skipping any that are already installed.
-# Idempotent, non-interactive, logs output.
-#
-# If the batch install fails (e.g. because one package name doesn't exist on
-# this particular Ubuntu release/architecture), falls back to installing each
-# package individually so a single missing/renamed package doesn't block
-# everything else in the list. This is what lets the same package list work
-# across different Ubuntu releases without hard-failing the whole module.
+# Idempotent, non-interactive, logs output, lock-safe for parallel jobs.
 # -----------------------------------------------------------------------------
 helpers::apt_install() {
     local pkgs_to_install=()
@@ -83,28 +116,39 @@ helpers::apt_install() {
     fi
 
     helpers::apt_update_once || true
+    helpers::wait_for_apt_lock
     log::info "Installing apt packages: ${pkgs_to_install[*]}"
-    if DEBIAN_FRONTEND=noninteractive sudo -E apt-get install -y "${pkgs_to_install[@]}" >>"${LOG_FILE}" 2>&1; then
+
+    local install_cmd="sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends"
+    if helpers::with_apt_lock $install_cmd "${pkgs_to_install[@]}" >>"${LOG_FILE}" 2>&1; then
         log::success "Installed: ${pkgs_to_install[*]}"
         return 0
     fi
 
-    log::warn "Batch install failed for: ${pkgs_to_install[*]}. Retrying one at a time (some packages may not exist on this Ubuntu release)."
+    log::warn "Batch install failed for: ${pkgs_to_install[*]}. Retrying one at a time."
     local failed=()
+    local installed=()
     for pkg in "${pkgs_to_install[@]}"; do
         if helpers::is_installed "$pkg"; then
             continue
         fi
-        if DEBIAN_FRONTEND=noninteractive sudo -E apt-get install -y "$pkg" >>"${LOG_FILE}" 2>&1; then
+        helpers::wait_for_apt_lock
+        if helpers::with_apt_lock $install_cmd "$pkg" >>"${LOG_FILE}" 2>&1; then
             log::success "Installed: ${pkg}"
+            installed+=("$pkg")
         else
-            log::warn "Package '${pkg}' is unavailable on this system and will be skipped."
+            log::warn "Package '${pkg}' could not be installed and will be skipped."
             failed+=("$pkg")
         fi
     done
 
     if [[ ${#failed[@]} -gt 0 ]]; then
         log::warn "Skipped unavailable packages: ${failed[*]}"
+    fi
+
+    # Return error if nothing was installed and everything failed
+    if [[ ${#installed[@]} -eq 0 && ${#failed[@]} -gt 0 ]]; then
+        return 1
     fi
     return 0
 }
@@ -335,6 +379,21 @@ helpers::mark_done() {
 helpers::already_done() {
     local key="$1"
     [[ -f "${LOG_DIR}/.state/${key}" ]]
+}
+
+# -----------------------------------------------------------------------------
+# helpers::copy_to_clipboard <text>
+# Attempts to copy text to the system clipboard via wl-copy or xclip.
+# -----------------------------------------------------------------------------
+helpers::copy_to_clipboard() {
+    local text="$1"
+    if helpers::command_exists wl-copy; then
+        printf '%s' "$text" | wl-copy 2>/dev/null && return 0
+    fi
+    if helpers::command_exists xclip; then
+        printf '%s' "$text" | xclip -selection clipboard 2>/dev/null && return 0
+    fi
+    return 1
 }
 
 export NON_INTERACTIVE

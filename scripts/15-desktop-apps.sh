@@ -24,59 +24,85 @@ helpers::apt_install software-properties-common apt-transport-https ca-certifica
 ARCH="$(dpkg --print-architecture)"
 CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")"
 
+# -----------------------------------------------------------------------------
+# install_local_or_remote_deb <pkg_name> <local_glob> <remote_url>
+# Installs a deb package, prioritizing any already-downloaded deb in ~/Downloads.
+# -----------------------------------------------------------------------------
+install_local_or_remote_deb() {
+    local pkg_name="$1"
+    local local_glob="$2"
+    local remote_url="$3"
+
+    if helpers::is_installed "$pkg_name"; then
+        log::info "${pkg_name} already installed"
+        return 0
+    fi
+
+    local user_downloads="$(helpers::current_user_home)/Downloads"
+    local local_candidate=""
+    for f in ${user_downloads}/${local_glob}; do
+        if [[ -f "$f" ]]; then
+            local_candidate="$f"
+            break
+        fi
+    done
+
+    if [[ -n "$local_candidate" ]]; then
+        log::info "Found local .deb for ${pkg_name}: $(basename "$local_candidate")"
+        helpers::wait_for_apt_lock
+        if helpers::with_apt_lock sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 install -y "$local_candidate" >>"${LOG_FILE}" 2>&1; then
+            log::success "Installed ${pkg_name} from local .deb"
+            return 0
+        fi
+    fi
+
+    log::info "Downloading and installing official .deb for ${pkg_name}..."
+    downloads::install_deb "$remote_url" "$pkg_name"
+}
+
 # ----------------------------- Google Chrome --------------------------------
-log::step "Google Chrome"
-if helpers::is_installed google-chrome-stable; then
-    log::info "Google Chrome already installed"
-else
-    helpers::add_apt_repo \
-        "google-chrome" \
-        "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
-        "https://dl.google.com/linux/linux_signing_key.pub" \
-        "/etc/apt/keyrings/google-chrome.gpg"
-    helpers::apt_install google-chrome-stable
-fi
+log::step "Google Chrome (deb)"
+install_local_or_remote_deb "google-chrome-stable" "google-chrome*.deb" "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
 
 # --------------------------- Visual Studio Code -----------------------------
-log::step "Visual Studio Code"
-if helpers::is_installed code; then
-    log::info "VS Code already installed"
-else
-    helpers::add_apt_repo \
-        "vscode" \
-        "deb [arch=${ARCH},arm64,armhf signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main" \
-        "https://packages.microsoft.com/keys/microsoft.asc" \
-        "/etc/apt/keyrings/microsoft.gpg"
-    helpers::apt_install code
-fi
+log::step "Visual Studio Code (deb)"
+install_local_or_remote_deb "code" "code*.deb" "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64"
 
 # --------------------------------- Discord ----------------------------------
-log::step "Discord"
-if helpers::is_installed discord; then
-    log::info "Discord already installed"
-else
-    downloads::install_deb "https://discord.com/api/download?platform=linux&format=deb" discord
-fi
+log::step "Discord (deb)"
+install_local_or_remote_deb "discord" "discord*.deb" "https://discord.com/api/download?platform=linux&format=deb"
 
-# ------------------------------ Antigravity IDE -----------------------------
-log::step "Antigravity IDE"
-if helpers::is_installed antigravity || helpers::command_exists antigravity-ide; then
-    log::info "Antigravity IDE already installed"
+# --------------------------------- Postman ----------------------------------
+log::step "Postman"
+if helpers::command_exists postman || [[ -d /opt/Postman ]] || snap list postman >/dev/null 2>&1; then
+    log::info "Postman already installed"
 else
-    log::info "Adding Google's official Antigravity apt repository..."
-    if helpers::add_apt_repo \
-        "antigravity" \
-        "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" \
-        "https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg" \
-        "/etc/apt/keyrings/antigravity-repo-key.gpg"; then
-        if helpers::apt_install antigravity; then
-            log::success "Antigravity IDE installed via official apt repository"
-        else
-            log::warn "Antigravity apt package unavailable/out of date. Google currently ships newer Antigravity builds as a Linux tarball."
-            log::warn "Download the latest tarball manually from https://antigravity.google/download/linux and follow Google's Linux install instructions."
-        fi
-    else
-        log::warn "Could not configure Antigravity apt repository. See ${LOG_FILE}."
+    log::info "Installing Postman standalone..."
+    tmp_postman_tar="${DEVBOOTSTRAP_TMP_DIR}/postman.tar.gz"
+    if downloads::fetch "https://dl.pstmn.io/download/latest/linux_64" "$tmp_postman_tar"; then
+        sudo mkdir -p /opt
+        sudo tar -xzf "$tmp_postman_tar" -C /opt >>"${LOG_FILE}" 2>&1
+        sudo ln -sf /opt/Postman/app/postman /usr/local/bin/postman
+        rm -f "$tmp_postman_tar"
+
+        # Create desktop launcher
+        user_home="$(helpers::current_user_home)"
+        mkdir -p "${user_home}/.local/share/applications"
+        cat <<'EOF' > "${user_home}/.local/share/applications/postman.desktop"
+[Desktop Entry]
+Name=Postman
+GenericName=API Client
+Comment=REST & GraphQL API Development Environment
+Exec=/opt/Postman/app/postman %U
+Icon=/opt/Postman/app/resources/app/assets/icon.png
+Terminal=false
+Type=Application
+Categories=Development;
+EOF
+        log::success "Postman installed to /opt/Postman"
+    elif helpers::command_exists snap; then
+        log::info "Falling back to snap install for Postman..."
+        sudo snap install postman >>"${LOG_FILE}" 2>&1 && log::success "Postman installed via snap" || log::warn "Postman install failed"
     fi
 fi
 
@@ -97,49 +123,44 @@ else
 fi
 
 # ------------------------------- Snap apps ----------------------------------
-log::step "Snap Applications (Android Studio, Postman, Telegram, WhatsApp)"
-utils::require_cmd snap "Ensure scripts/02-base-packages.sh ran successfully (installs snapd)."
+log::step "Additional Snap Applications"
+if helpers::command_exists snap; then
+    for entry in "${SNAP_APPS[@]}"; do
+        candidates_part="${entry%%:*}"
+        snap_flag="${entry#*:}"
+        IFS='|' read -ra candidates <<< "$candidates_part"
 
-for entry in "${SNAP_APPS[@]}"; do
-    candidates_part="${entry%%:*}"
-    snap_flag="${entry#*:}"
-    IFS='|' read -ra candidates <<< "$candidates_part"
+        # Skip postman if already handled above
+        [[ "$candidates_part" == *"postman"* ]] && continue
 
-    already_installed=""
-    for candidate in "${candidates[@]}"; do
-        if snap list "$candidate" >/dev/null 2>&1; then
-            already_installed="$candidate"
-            break
-        fi
-    done
-
-    if [[ -n "$already_installed" ]]; then
-        log::info "Snap '${already_installed}' already installed"
-        continue
-    fi
-
-    installed_ok=0
-    for candidate in "${candidates[@]}"; do
-        log::info "Installing snap: ${candidate} ${snap_flag:+(--$snap_flag)}"
-        if [[ -n "$snap_flag" ]]; then
-            if sudo snap install "$candidate" "--${snap_flag}" >>"${LOG_FILE}" 2>&1; then
-                log::success "Installed snap ${candidate}"
-                installed_ok=1
+        already_installed=""
+        for candidate in "${candidates[@]}"; do
+            if snap list "$candidate" >/dev/null 2>&1; then
+                already_installed="$candidate"
                 break
             fi
-        else
-            if sudo snap install "$candidate" >>"${LOG_FILE}" 2>&1; then
-                log::success "Installed snap ${candidate}"
-                installed_ok=1
-                break
-            fi
-        fi
-        log::warn "Snap '${candidate}' failed or is unavailable; trying next candidate if any."
-    done
+        done
 
-    if [[ "$installed_ok" -eq 0 ]]; then
-        log::warn "None of the candidates for '${candidates_part}' could be installed (see ${LOG_FILE})."
-    fi
-done
+        if [[ -n "$already_installed" ]]; then
+            log::info "Snap '${already_installed}' already installed"
+            continue
+        fi
+
+        for candidate in "${candidates[@]}"; do
+            log::info "Installing snap: ${candidate} ${snap_flag:+(--$snap_flag)}"
+            if [[ -n "$snap_flag" ]]; then
+                if sudo snap install "$candidate" "--${snap_flag}" >>"${LOG_FILE}" 2>&1; then
+                    log::success "Installed snap ${candidate}"
+                    break
+                fi
+            else
+                if sudo snap install "$candidate" >>"${LOG_FILE}" 2>&1; then
+                    log::success "Installed snap ${candidate}"
+                    break
+                fi
+            fi
+        done
+    done
+fi
 
 log::success "Desktop applications step complete"

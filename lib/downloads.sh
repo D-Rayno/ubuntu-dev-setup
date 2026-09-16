@@ -49,15 +49,18 @@ downloads::install_deb() {
     local tmp_deb="${DEVBOOTSTRAP_TMP_DIR}/$(basename "${url%%\?*}")"
     downloads::fetch "$url" "$tmp_deb" || return 1
 
+    helpers::wait_for_apt_lock
     log::info "Installing package: $(basename "$tmp_deb")"
-    if sudo apt-get install -y "$tmp_deb" >>"${LOG_FILE}" 2>&1; then
+    if helpers::with_apt_lock sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 install -y "$tmp_deb" >>"${LOG_FILE}" 2>&1; then
         log::success "Installed $(basename "$tmp_deb")"
         rm -f "$tmp_deb"
         return 0
     else
         log::warn "apt-get install failed for $(basename "$tmp_deb"), attempting dpkg fallback"
-        if sudo dpkg -i "$tmp_deb" >>"${LOG_FILE}" 2>&1; then
-            sudo apt-get install -f -y >>"${LOG_FILE}" 2>&1
+        helpers::wait_for_apt_lock
+        if helpers::with_apt_lock sudo dpkg -i "$tmp_deb" >>"${LOG_FILE}" 2>&1; then
+            helpers::wait_for_apt_lock
+            helpers::with_apt_lock sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 install -f -y >>"${LOG_FILE}" 2>&1
             log::success "Installed $(basename "$tmp_deb") via dpkg fallback"
             rm -f "$tmp_deb"
             return 0

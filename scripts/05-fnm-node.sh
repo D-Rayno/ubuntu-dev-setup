@@ -86,23 +86,29 @@ else
     log::success "npm ready: $(npm -v)"
 fi
 
-log::info "Ensuring Corepack is enabled..."
-corepack enable >>"${LOG_FILE}" 2>&1 || log::warn "corepack enable reported an issue (may need shell restart)"
+# Disable Corepack interactive download prompt to prevent hanging in non-interactive scripts
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+while IFS= read -r rc_file; do
+    helpers::line_in_file "$rc_file" 'export COREPACK_ENABLE_DOWNLOAD_PROMPT=0'
+done < <(helpers::detect_shell_rc_files)
+
+log::info "Configuring Corepack..."
+corepack enable >>"${LOG_FILE}" 2>&1 || log::warn "corepack enable reported an issue (non-fatal)"
 
 # -----------------------------------------------------------------------------
-# pnpm: only prepared via corepack if it isn't already available. Once
-# installed, later runs leave the active pnpm version untouched.
+# pnpm: install reliably via npm (avoids Corepack signature verification hangs)
+# and ensure it is available globally.
 # -----------------------------------------------------------------------------
 if helpers::command_exists pnpm; then
-    log::info "pnpm already installed: $(pnpm --version 2>/dev/null). Skipping (no forced upgrade)."
+    log::info "pnpm already installed: $(pnpm --version 2>/dev/null || echo 'ready'). Skipping."
 else
-    log::info "Preparing pnpm via corepack (version: ${PNPM_VERSION})..."
+    log::info "Installing pnpm (version: ${PNPM_VERSION})..."
     if [[ "$PNPM_VERSION" == "latest" ]]; then
-        corepack prepare pnpm@latest --activate >>"${LOG_FILE}" 2>&1
+        npm install -g pnpm@latest >>"${LOG_FILE}" 2>&1 || corepack prepare pnpm@latest --activate >>"${LOG_FILE}" 2>&1
     else
-        corepack prepare "pnpm@${PNPM_VERSION}" --activate >>"${LOG_FILE}" 2>&1
+        npm install -g "pnpm@${PNPM_VERSION}" >>"${LOG_FILE}" 2>&1 || corepack prepare "pnpm@${PNPM_VERSION}" --activate >>"${LOG_FILE}" 2>&1
     fi
-    log::success "pnpm ready: $(pnpm --version 2>/dev/null || echo 'restart shell to confirm')"
+    log::success "pnpm ready: $(pnpm --version 2>/dev/null || echo 'installed')"
 fi
 
 log::success "Node.js / fnm step complete"

@@ -37,18 +37,32 @@ else
     log::success "Docker Engine, Buildx, and Compose plugin installed"
 fi
 
-log::info "Enabling and starting Docker service..."
-sudo systemctl enable docker >>"${LOG_FILE}" 2>&1
-sudo systemctl start docker >>"${LOG_FILE}" 2>&1
-log::success "Docker service enabled and started"
-
 current_user="$(id -un)"
-if id -nG "$current_user" | grep -qw docker; then
-    log::info "User '${current_user}' already in docker group"
-else
-    sudo usermod -aG docker "$current_user"
-    log::success "Added '${current_user}' to docker group (log out/in, or run 'newgrp docker', to take effect)"
+# Ensure docker group exists and user is a member
+sudo groupadd -f docker
+sudo usermod -aG docker "$current_user"
+log::success "User '${current_user}' configured in docker group"
+
+# Configure docker.socket permissions so non-root group access works reliably
+sudo mkdir -p /etc/systemd/system/docker.socket.d
+sudo tee /etc/systemd/system/docker.socket.d/override.conf >/dev/null <<'EOF'
+[Socket]
+SocketMode=0660
+SocketUser=root
+SocketGroup=docker
+EOF
+
+log::info "Enabling and starting Docker service & socket..."
+sudo systemctl daemon-reload >>"${LOG_FILE}" 2>&1
+sudo systemctl enable --now docker.socket >>"${LOG_FILE}" 2>&1
+sudo systemctl enable --now docker.service >>"${LOG_FILE}" 2>&1
+
+# Normalize live socket permissions
+if [[ -S /var/run/docker.sock ]]; then
+    sudo chown root:docker /var/run/docker.sock
+    sudo chmod 660 /var/run/docker.sock
 fi
+log::success "Docker service & socket active with group permissions"
 
 DAEMON_JSON="/etc/docker/daemon.json"
 if [[ -f "$DAEMON_JSON" ]]; then
@@ -69,11 +83,18 @@ EOF
     log::success "Default daemon.json written and Docker restarted"
 fi
 
-log::info "Verifying Docker installation..."
-if sudo docker run --rm hello-world >>"${LOG_FILE}" 2>&1; then
-    log::success "Docker verified: hello-world container ran successfully"
+# Ensure live socket is accessible after restart
+if [[ -S /var/run/docker.sock ]]; then
+    sudo chown root:docker /var/run/docker.sock
+    sudo chmod 660 /var/run/docker.sock
+fi
+
+log::info "Verifying non-root Docker access..."
+test_docker_cmd="docker ps"
+if sg docker -c "$test_docker_cmd" >>"${LOG_FILE}" 2>&1 || docker ps >>"${LOG_FILE}" 2>&1; then
+    log::success "Docker verified: non-root access is working successfully!"
 else
-    log::warn "Docker hello-world test failed. Check ${LOG_FILE}."
+    log::warn "Non-root Docker test did not complete immediately. Group changes take effect on shell restart or 'newgrp docker'."
 fi
 
 docker --version 2>/dev/null | while read -r line; do log::info "$line"; done

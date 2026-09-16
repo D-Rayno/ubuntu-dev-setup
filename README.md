@@ -43,30 +43,30 @@ left off.
 | 01 | System update (`apt-get update && upgrade`) |
 | 02 | Base CLI packages: build-essential, curl, git, ripgrep, fzf, bat, eza, htop, tmux, zsh, jq, and more |
 | 03 | Git (identity, default branch, credential helper, optional SSH commit signing) |
-| 04 | SSH (restores keys from a backup **only if you have one**; otherwise generates a fresh ed25519 key; fixes permissions; tests GitHub connectivity) |
-| 05 | Node.js via **fnm**, npm, Corepack, **pnpm** |
-| 06 | **Bun** |
+| 04 | SSH (accepts old private key import/paste or generates fresh ed25519; pauses for GitHub/GitLab setup; tests authentication) |
+| 05 | Node.js via **fnm**, npm, Corepack (non-hanging), **pnpm** |
+| 06 | **Bun** runtime |
 | 07 | PHP 8.2 / 8.3 / 8.4 (official `packages.sury.org/php` repository) with common extensions |
 | 08 | **Composer** (signature-verified install) + Laravel installer |
-| 09 | **Docker Engine**, Compose plugin, Buildx |
-| 10 | **Java** — OpenJDK via apt + `update-alternatives` (multi-version capable; only 17 installed by default) |
+| 09 | **Docker Engine**, Compose plugin, Buildx (configured with full **non-root user access**) |
+| 10 | **Java** — OpenJDK via apt + `update-alternatives` (multi-version capable; 17 default) |
 | 11 | **MySQL** + **PostgreSQL** (services enabled, dev user/db created) |
 | 12 | **Redis** |
 | 13 | **Rust** via rustup + common cargo utilities |
 | 14 | Framework CLIs: TypeScript, ESLint, Prettier, Vite, Turbo, Nx, Vue CLI, Angular CLI, Next.js, Nuxt, NestJS CLI, Tauri CLI, Expo/React Native CLIs, Laravel Installer |
-| 15 | Desktop apps: **Chrome, VS Code, Discord, Antigravity IDE, TablePlus** (official repos/.deb) + **snap**: Android Studio, Postman, Telegram, WhatsApp (Whatsie, with automatic fallback candidates) |
-| 16 | NVIDIA driver (auto-detected) + optional CUDA toolkit |
+| 15 | Desktop apps: **Chrome, VS Code, Discord** (native `.deb` packages), **Postman** (standalone `/opt/Postman` + desktop launcher), **TablePlus** |
+| 16 | **Hardware Drivers & System Remediation** (`ubuntu-drivers` autoinstall + Samsung SM961 NVMe PCIe ASPM/APST link-drop freeze fix in GRUB) |
 | 17 | Shell aliases + bash/zsh completion |
 | 18 | Final validation + summary report |
 | 19 | Python 3 (pip, venv, dev headers, `python` shim, pipx-managed global CLI tools) |
 | 20 | **Workspace directory** (`~/Projects` by default) + a shell alias to jump to it |
+| 21 | **AI Agents Suite**: Antigravity IDE (dark icon), Antigravity 2.0 (light icon), Claude Code CLI, OpenAI Codex CLI |
 
-Every apt-based install prefers the **official** vendor repository. Unofficial
-PPAs are never used — PHP uses the official `packages.sury.org/php` repo
-(deb822 format + dedicated keyring package, exactly as documented at
-php.net/downloads), and Java uses Ubuntu's own OpenJDK packages. Snap is used
-**only** for Android Studio, Postman, Telegram, and WhatsApp, per project
-policy.
+### Key Features
+- **Interactive Component Selector**: Launches an interactive checklist (`whiptail` dialog or terminal menu) allowing you to pick and install only the packages you need.
+- **Multi-Threaded Staged Parallelism**: Independent runtime and app streams execute concurrently across CPU cores, with mutual exclusion on APT operations to prevent dpkg lock contention.
+- **Native .deb Packages**: Google Chrome, VS Code, and Discord are installed directly via `.deb` packages (using cached copies in `~/Downloads` if already downloaded).
+- **Zero-Friction Hardware Fixes**: Autodetects Samsung SM961/PM961 NVMe drives prone to PCIe ASPM/APST disconnects and injects kernel parameters (`pcie_aspm=off nvme_core.default_ps_max_latency_us=0`) directly into `/etc/default/grub`.
 
 ---
 

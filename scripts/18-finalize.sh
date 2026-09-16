@@ -41,35 +41,46 @@ finalize::check() {
     RESULTS+=("${status}|${label}|${first_line}")
 }
 
-finalize::check "Git"          git --version
-finalize::check "SSH client"   ssh -V
-finalize::check "Node.js"      node -v
-finalize::check "npm"          npm -v
-finalize::check "pnpm"         pnpm --version
-finalize::check "Bun"          bun --version
-finalize::check "PHP"          php -v
-finalize::check "Composer"     composer --version
-finalize::check "Docker"       docker --version
-finalize::check "Docker Compose" docker compose version
-finalize::check "Java"         java -version
-finalize::check "MySQL"        mysql --version
-finalize::check "PostgreSQL"   psql --version
-finalize::check "Redis"        redis-cli --version
-finalize::check "Rust"         rustc --version
-finalize::check "Cargo"        cargo --version
-finalize::check "Python 3"     python3 --version
-finalize::check "pip"          python3 -m pip --version
-finalize::check "pipx"         pipx --version
-finalize::check "TypeScript"   tsc --version
-finalize::check "ESLint"       eslint --version
-finalize::check "Vite"         vite --version
-finalize::check "NestJS CLI"   nest --version
-finalize::check "Google Chrome" google-chrome --version
-finalize::check "VS Code"      code --version
+finalize::check "Git"              git --version
+finalize::check "SSH client"       ssh -V
+finalize::check "Node.js"          node -v
+finalize::check "npm"              npm -v
+finalize::check "pnpm"             pnpm --version
+finalize::check "Bun"              bun --version
+finalize::check "PHP"              php -v
+finalize::check "Composer"         composer --version
+finalize::check "Docker Engine"    docker --version
+finalize::check "Docker Compose"   docker compose version
+finalize::check "Docker (non-root)" docker ps
+finalize::check "Java"             java -version
+finalize::check "MySQL"            mysql --version
+finalize::check "PostgreSQL"       psql --version
+finalize::check "Redis"            redis-cli --version
+finalize::check "Rust"             rustc --version
+finalize::check "Cargo"            cargo --version
+finalize::check "Python 3"         python3 --version
+finalize::check "pip"              python3 -m pip --version
+finalize::check "pipx"             pipx --version
+finalize::check "TypeScript"       tsc --version
+finalize::check "ESLint"           eslint --version
+finalize::check "Vite"             vite --version
+finalize::check "NestJS CLI"       nest --version
+finalize::check "Google Chrome"    google-chrome --version
+finalize::check "VS Code"          code --version
+finalize::check "Discord"          which discord
+finalize::check "Postman"          which postman
+finalize::check "Antigravity IDE"  which antigravity-ide
+finalize::check "Antigravity 2.0"  which antigravity
+finalize::check "Claude Code"      claude --version
+finalize::check "OpenAI Codex"     codex --version
 
 user_home_check="$(helpers::current_user_home)"
 workspace_check_dir="${WORKSPACE_DIR/#\~/$user_home_check}"
-finalize::check "Workspace dir" test -d "$workspace_check_dir"
+finalize::check "Workspace dir"    test -d "$workspace_check_dir"
+
+if lspci -nn 2>/dev/null | grep -iq "144d:a804" || lsblk -d -o MODEL 2>/dev/null | grep -iqE "MZVPW|SM961|PM961"; then
+    finalize::check "NVMe Freeze Fix" grep -q "pcie_aspm=off" /proc/cmdline
+fi
 
 echo ""
 printf "%-10s %-20s %-40s\n" "STATUS" "TOOL" "VERSION / NOTE"
